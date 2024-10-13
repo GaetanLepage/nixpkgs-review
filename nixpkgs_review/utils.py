@@ -6,12 +6,13 @@ import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import IO, Any, TypeAlias
+from typing import IO, Any, Literal, TypeAlias
 
 HAS_TTY = sys.stdout.isatty()
 ROOT = Path(os.path.dirname(os.path.realpath(__file__)))
 
 System: TypeAlias = str
+BUILD_GRAPH_TYPE = Literal["nix", "nom"]
 
 
 def color_text(code: int, file: IO[Any] | None = None) -> Callable[[str], None]:
@@ -70,7 +71,7 @@ def current_system() -> str:
     return system.stdout
 
 
-def nix_nom_tool() -> str:
+def nix_nom_tool() -> BUILD_GRAPH_TYPE:
     "Return `nom` and `nom-shell` if found in $PATH"
     if shutil.which("nom") and shutil.which("nom-shell"):
         return "nom"

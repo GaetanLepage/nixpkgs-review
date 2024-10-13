@@ -5,11 +5,10 @@ import subprocess
 import sys
 from importlib import metadata
 from pathlib import Path
-from re import Pattern
 from shutil import which
 from typing import Any, cast
 
-from ..utils import nix_nom_tool
+from . import config as config
 from .approve import approve_command
 from .comments import show_comments
 from .merge import merge_command
@@ -23,22 +22,19 @@ try:
 except ImportError:
     argcomplete = None
 
-
-def regex_type(s: str) -> Pattern[str]:
-    try:
-        return re.compile(s)
-    except re.error as e:
-        raise argparse.ArgumentTypeError(f"'{s}' is not a valid regex: {e}")
+DEFAULTS: config.Config = config.Config()
 
 
 def pr_flags(
     subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]",
 ) -> argparse.ArgumentParser:
     pr_parser = subparsers.add_parser("pr", help="review a pull request on nixpkgs")
+
+    defaults: config.PrConfig = DEFAULTS.pr_config
     pr_parser.add_argument(
         "--eval",
-        default="ofborg",
-        choices=["ofborg", "local"],
+        default=defaults.eval,
+        choices=config.EVAL_VALUES,
         help="Whether to use ofborg's evaluation result",
     )
     checkout_help = (
@@ -50,8 +46,8 @@ def pr_flags(
     pr_parser.add_argument(
         "-c",
         "--checkout",
-        default="merge",
-        choices=["merge", "commit"],
+        default=defaults.checkout,
+        choices=config.CHECKOUT_VALUES,
         help=checkout_help,
     )
     pr_parser.add_argument(
@@ -62,6 +58,7 @@ def pr_flags(
     pr_parser.add_argument(
         "--post-result",
         action="store_true",
+        default=defaults.post_result,
         help="Post the nixpkgs-review results as a PR comment",
     )
     pr_parser.set_defaults(func=pr_command)
@@ -74,11 +71,17 @@ def rev_flags(
     rev_parser = subparsers.add_parser(
         "rev", help="review a change in the local pull request repository"
     )
+
+    defaults: config.RevConfig = DEFAULTS.rev_config
     rev_parser.add_argument(
-        "-b", "--branch", default="master", help="branch to compare against with"
+        "-b",
+        "--branch",
+        default=defaults.branch,
+        help="branch to compare against with",
     )
     rev_parser.add_argument(
-        "commit", help="commit/tag/ref/branch in your local git repository"
+        "commit",
+        help="commit/tag/ref/branch in your local git repository",
     )
 
     rev_parser.set_defaults(func=rev_command)
@@ -89,17 +92,22 @@ def wip_flags(
     subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]",
 ) -> argparse.ArgumentParser:
     wip_parser = subparsers.add_parser(
-        "wip", help="review the uncommitted changes in the working tree"
+        "wip",
+        help="review the uncommitted changes in the working tree",
     )
 
+    defaults: config.WipConfig = DEFAULTS.wip_config
     wip_parser.add_argument(
-        "-b", "--branch", default="master", help="branch to compare against with"
+        "-b",
+        "--branch",
+        default=defaults.branch,
+        help="branch to compare against with",
     )
     wip_parser.add_argument(
         "-s",
         "--staged",
         action="store_true",
-        default=False,
+        default=defaults.staged,
         help="Whether to build staged changes",
     )
 
@@ -119,12 +127,7 @@ def hub_config_path() -> Path:
     if raw_hub_path:
         return Path(raw_hub_path)
 
-    raw_config_home = os.environ.get("XDG_CONFIG_HOME", None)
-    if raw_config_home is None:
-        config_home = Path.home().joinpath(".config")
-    else:
-        config_home = Path(raw_config_home)
-    return config_home.joinpath("hub")
+    return config.get_config_home().joinpath("hub")
 
 
 def read_github_token() -> str | None:
@@ -156,16 +159,19 @@ def common_flags() -> list[CommonFlag]:
         CommonFlag(
             "--allow",
             action="append",
-            default=[],
-            choices=["aliases", "ifd", "url-literals"],
+            default=DEFAULTS.allow,
+            choices=config.ALLOW_VALUES,
             help="Allow features that are normally disabled, can be passed multiple times",
         ),
         CommonFlag(
-            "--build-args", default="", help="arguments passed to nix when building"
+            "--build-args",
+            default="",
+            help="arguments passed to nix when building",
         ),
         CommonFlag(
             "--no-shell",
             action="store_true",
+            default=DEFAULTS.no_shell,
             help="Only evaluate and build without executing nix-shell",
         ),
         CommonFlag(
@@ -179,44 +185,45 @@ def common_flags() -> list[CommonFlag]:
             "--package-regex",
             action="append",
             default=[],
-            type=regex_type,
+            type=config.regex_type,
             help="Regular expression that package attributes have to match (can be passed multiple times)",
         ),
         CommonFlag(
             "-r",
             "--remote",
-            default="https://github.com/NixOS/nixpkgs",
+            default=DEFAULTS.remote,
             help="Name of the nixpkgs repo to review",
         ),
         CommonFlag(
             "--run",
             type=str,
-            default="",
+            default=DEFAULTS.run,
             help="Passed to nix-shell to run a command instead of an interactive nix-shell",
         ),
         CommonFlag(
             "--sandbox",
             action="store_true",
+            default=DEFAULTS.sandbox,
             help="Wraps nix-shell inside a sandbox (requires `bwrap` in PATH)",
         ),
         CommonFlag(
             "-P",
             "--skip-package",
             action="append",
-            default=[],
+            default=DEFAULTS.skipped_packages,
             help="Packages to not build (can be passed multiple times)",
         ),
         CommonFlag(
             "--skip-package-regex",
             action="append",
-            default=[],
-            type=regex_type,
+            default=DEFAULTS.skipped_package_regexes,
+            type=config.regex_type,
             help="Regular expression that package attributes have not to match (can be passed multiple times)",
         ),
         CommonFlag(
             "--systems",
             type=str,
-            default="current",
+            default=DEFAULTS.systems,
             help="Nix 'systems' to evaluate and build packages for",
         ),
         CommonFlag(
@@ -234,25 +241,26 @@ def common_flags() -> list[CommonFlag]:
         CommonFlag(
             "--build-graph",
             type=str,
-            default=nix_nom_tool(),
-            choices=["nix", "nom"],
+            default=DEFAULTS.build_graph,
+            choices=config.BUILD_GRAPH_VALUES,
             help='Build graph to print. Use either "nom" or "nix". Will default to "nom" if available',
         ),
         CommonFlag(
             "--print-result",
             action="store_true",
+            default=DEFAULTS.print_result,
             help="Print the nixpkgs-review results to stdout",
         ),
         CommonFlag(
             "--extra-nixpkgs-config",
             type=str,
-            default="{ }",
+            default=DEFAULTS.extra_nixpkgs_config,
             help="Extra nixpkgs config to pass to `import <nixpkgs>`",
         ),
         CommonFlag(
             "--num-parallel-evals",
             type=int,
-            default=1,
+            default=DEFAULTS.num_parallel_evals,
             help="Number of parallel `nix-env`/`nix eval` processes to run simultaneously (warning, can imply heavy RAM usage)",
         ),
     ]

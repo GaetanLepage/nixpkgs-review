@@ -12,6 +12,7 @@ from ..nix import Attr
 from ..review import CheckoutOption, Review
 from ..utils import System, warn
 from .utils import ensure_github_token
+from .config import Config
 
 
 def parse_pr_numbers(number_args: list[str]) -> list[int]:
@@ -34,7 +35,11 @@ def parse_pr_numbers(number_args: list[str]) -> list[int]:
 
 
 def pr_command(args: argparse.Namespace) -> str:
+    config: Config = Config()
+    config.read_config()
+
     prs: list[int] = parse_pr_numbers(args.number)
+    config.update_from_args(args)
     use_ofborg_eval = args.eval == "ofborg"
     checkout_option = (
         CheckoutOption.MERGE if args.checkout == "merge" else CheckoutOption.COMMIT
