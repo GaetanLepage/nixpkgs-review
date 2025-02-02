@@ -290,8 +290,9 @@ class Review:
     def build(
         self, packages_per_system: dict[System, set[str]], args: str
     ) -> dict[System, list[Attr]]:
+        packages_per_system_with_skip: dict[System, dict[str, bool]] = {}
         for system, packages in packages_per_system.items():
-            packages_per_system[system] = filter_packages(
+            packages_per_system_with_skip[system] = filter_packages(
                 packages,
                 self.only_packages,
                 self.package_regex,
@@ -302,7 +303,7 @@ class Review:
                 self.builddir.nix_path,
             )
         return nix_build(
-            packages_per_system,
+            packages_per_system_with_skip,
             args,
             self.builddir.path,
             self.local_system,
@@ -609,9 +610,11 @@ def join_packages(
     system: str,
     allow: AllowedFeatures,
     nix_path: str,
-) -> set[str]:
-    changed_attrs = package_attrs(changed_packages, system, allow, nix_path)
-    specified_attrs = package_attrs(
+) -> dict[str, bool]:
+    changed_attrs: dict[Path, Attr] = package_attrs(
+        changed_packages, system, allow, nix_path
+    )
+    specified_attrs: dict[Path, Attr] = package_attrs(
         specified_packages,
         system,
         allow,
@@ -630,9 +633,25 @@ def join_packages(
         )
         warn(" ".join(specified_attrs[path].name for path in nonexistent))
         sys.exit(1)
-    union_paths = (changed_attrs.keys() & specified_attrs.keys()) | tests.keys()
 
-    return {specified_attrs[path].name for path in union_paths}
+        # Final set of (package_name, is_skipped) pairs
+    packages: dict[str, bool] = {}
+
+    # packages to build (non-skipped):
+    # -
+    # - AND selected packages that are tests
+    kept_paths = (
+        # changed packages that have been selected
+        changed_attrs.keys() & specified_attrs.keys()
+    ) | tests.keys()  # and specified packages that are tests
+
+    packages |= {specified_attrs[path].name: False for path in kept_paths}
+
+    # skipped packages (changed packages that have not been selected):
+    skipped_paths = changed_attrs.keys() - specified_attrs.keys()
+    packages |= {changed_attrs[path].name: True for path in skipped_paths}
+
+    return packages
 
 
 def filter_packages(
@@ -644,8 +663,8 @@ def filter_packages(
     system: str,
     allow: AllowedFeatures,
     nix_path: str,
-) -> set[str]:
-    packages: set[str] = set()
+) -> dict[str, bool]:
+    packages: dict[str, bool] = {}
     assert isinstance(changed_packages, set)
 
     if (
@@ -654,7 +673,7 @@ def filter_packages(
         and len(skip_packages) == 0
         and len(skip_package_regexes) == 0
     ):
-        return changed_packages
+        return {package: False for package in changed_packages}
 
     if len(specified_packages) > 0:
         packages = join_packages(
@@ -668,22 +687,22 @@ def filter_packages(
     for attr in changed_packages:
         for regex in package_regexes:
             if regex.match(attr):
-                packages.add(attr)
+                packages[attr] = False
 
     # if no packages are build explicitly then treat
     # like like all changed packages are supplied via --package
     # otherwise we can't discard the ones we do not like to build
-    if not packages:
-        packages = changed_packages
+    if len(packages) == 0:
+        packages = {package: False for package in changed_packages}
 
     if len(skip_packages) > 0:
         for package in skip_packages:
-            packages.discard(package)
+            packages[package] = True
 
     for attr in packages.copy():
         for regex in skip_package_regexes:
             if regex.match(attr):
-                packages.discard(attr)
+                packages[attr] = True
 
     return packages
 

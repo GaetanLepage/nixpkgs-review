@@ -288,6 +288,8 @@ class Report:
                 cmd += f" pr {pr}"
             if self.extra_nixpkgs_config:
                 cmd += f" --extra-nixpkgs-config '{self.extra_nixpkgs_config}'"
+            if self.extra_nixpkgs_config:
+                cmd += f" --extra-nixpkgs-config '{self.extra_nixpkgs_config}'"
             if self.checkout != "merge":
                 cmd += f" --checkout {self.checkout}"
             for option_name, option_value in {

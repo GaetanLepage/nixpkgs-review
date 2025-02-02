@@ -21,6 +21,7 @@ class Attr:
     exists: bool
     broken: bool
     blacklisted: bool
+    skipped: bool
     path: Path | None
     drv_path: str | None
     aliases: list[str] = field(default_factory=list)
@@ -213,6 +214,7 @@ def _nix_eval_filter(json: dict[str, Any]) -> list[Attr]:
             exists=props["exists"],
             broken=props["broken"],
             blacklisted=name in blacklist,
+            skipped=False,
             path=path,
             drv_path=props["drvPath"],
         )
@@ -301,7 +303,7 @@ def multi_system_eval(
 
 
 def nix_build(
-    attr_names_per_system: dict[System, set[str]],
+    attr_names_per_system: dict[System, dict[str, bool]],
     args: str,
     cache_directory: Path,
     local_system: System,
@@ -315,8 +317,13 @@ def nix_build(
         info("Nothing to be built.")
         return {}
 
+    all_attrs_per_system: dict[System, set[str]] = {
+        system: set(attr_names.keys())
+        for system, attr_names in attr_names_per_system.items()
+    }
+
     attrs_per_system: dict[System, list[Attr]] = multi_system_eval(
-        attr_names_per_system,
+        all_attrs_per_system,
         allow,
         nix_path,
         n_threads=n_threads,
@@ -326,7 +333,8 @@ def nix_build(
     for system, attrs in attrs_per_system.items():
         filtered_per_system[system] = []
         for attr in attrs:
-            if not (attr.broken or attr.blacklisted):
+            skipped: bool = attr_names_per_system[system][attr.name]
+            if not (attr.broken or attr.blacklisted or skipped):
                 filtered_per_system[system].append(attr.name)
 
     if all(len(filtered) == 0 for filtered in filtered_per_system.values()):
